@@ -32,17 +32,13 @@ header() {
   echo -e "\n${CYAN}${BOLD}${border} $title ${border}${RESET}\n"
 }
 
-# Detect distribution / package manager
+# Detect package manager
 detect_distro() {
-  if command -v pacman >/dev/null 2>&1; then
-    DISTRO="arch"
-  elif command -v dnf >/dev/null 2>&1; then
-    DISTRO="fedora"
-  else
-    echo -e "${RED}Unsupported distro: need pacman (Arch) or dnf (Fedora).${RESET}"
+  if ! command -v dnf >/dev/null 2>&1; then
+    echo -e "${RED}Unsupported distro: need dnf (Fedora).${RESET}"
     exit 1
   fi
-  echo "Detected package manager for: $DISTRO"
+  echo "Detected package manager: dnf"
 }
 
 # Confirm execution
@@ -56,80 +52,6 @@ if [[ ! $confirm =~ ^[Yy]$ ]]; then
 fi
 
 detect_distro
-
-#############################################
-# Arch Linux package setup
-#############################################
-
-# Function to add XeroLinux repo
-add_xerolinux_repo() {
-  if grep -Pq '^\[xerolinux\]' /etc/pacman.conf; then
-    echo "XeroLinux repo already present."
-  else
-    echo "Adding XeroLinux repository..."
-    echo -e "\n[xerolinux]\nSigLevel = Optional TrustAll\nServer = https://repos.xerolinux.xyz/\$repo/\$arch" | sudo tee -a /etc/pacman.conf >/dev/null
-  fi
-}
-
-# Function to add the Chaotic-AUR repository
-add_chaotic_aur() {
-  if ! grep -q "\[chaotic-aur\]" /etc/pacman.conf; then
-    header "Adding The Chaotic-AUR Repository"
-    sudo pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
-    sudo pacman-key --lsign-key 3056513887B78AEB
-    sudo pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst'
-    sudo pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'
-    echo -e '\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist' | sudo tee -a /etc/pacman.conf
-    echo "Chaotic-AUR Repository added!"
-  else
-    echo "Chaotic-AUR Repository already added."
-  fi
-}
-
-# Detect or install AUR helper
-setup_aur_helper() {
-  if command -v paru >/dev/null 2>&1; then
-    AUR_HELPER="paru"
-  elif command -v yay >/dev/null 2>&1; then
-    AUR_HELPER="yay"
-  else
-    header "AUR Helper Setup"
-    echo "Choose AUR helper to install:"
-    select choice in "paru" "yay"; do
-      case "$choice" in
-        paru|yay)
-          sudo pacman -Syy "$choice"
-          AUR_HELPER="$choice"
-          break
-          ;;
-        *)
-          echo "Invalid choice."
-          ;;
-      esac
-    done
-  fi
-  echo "Using AUR helper: $AUR_HELPER"
-}
-
-install_arch_packages() {
-  header "Adding Repositories"
-  add_xerolinux_repo
-  add_chaotic_aur
-
-  header "Installing Native Packages"
-  # kwin-zones = KDE-automotive ext-zones plugin, from the XeroLinux repo added above.
-  sudo pacman -Sy --noconfirm --needed \
-    cava kwin-zones btop imagemagick kvantum unzip jq xmlstarlet fastfetch \
-    ttf-hack-nerd ttf-fira-code kdeconnect ttf-terminus-nerd python-websockets \
-    noto-fonts-emoji ttf-meslo-nerd qt6-websockets adw-gtk-theme
-
-  setup_aur_helper
-
-  header "Installing AUR Packages"
-  # Tela-circle is installed from source (shared step) for cross-distro parity.
-  $AUR_HELPER -S --noconfirm --needed \
-    ttf-meslo-nerd-font-powerlevel10k oh-my-posh-bin pacseek
-}
 
 #############################################
 # Fedora package setup
@@ -158,9 +80,9 @@ install_nerd_fonts() {
   fc-cache -f >/dev/null 2>&1 || true
 }
 
-# dnfseek: Fedora replacement for Arch's pacseek (fzf-based dnf TUI browser)
+# dnfseek: fzf-based dnf TUI browser
 install_dnfseek() {
-  header "Installing dnfseek (pacseek replacement)"
+  header "Installing dnfseek"
   if command -v dnfseek >/dev/null 2>&1; then
     echo "dnfseek already present."
     return
@@ -184,7 +106,7 @@ install_dnfseek() {
 install_kurve_cava_plugin() {
   header "Building Kurve CAVA Visualizer Plugin"
   rm -rf /tmp/kurve
-  if git clone --depth=1 --branch v3.5.1 https://github.com/luisbocanegra/kurve.git /tmp/kurve \
+  if git clone --depth=1 --branch v3.6.1 https://github.com/luisbocanegra/kurve.git /tmp/kurve \
      || git clone --depth=1 https://github.com/luisbocanegra/kurve.git /tmp/kurve; then
     ( cd /tmp/kurve && ./install.sh ) \
       || echo "Warning: Kurve plugin build failed; widget falls back to QtWebSockets."
@@ -194,7 +116,7 @@ install_kurve_cava_plugin() {
   fi
 }
 
-# oh-my-posh (oh-my-posh-bin on Arch) -> official installer to /usr/local/bin
+# oh-my-posh -> official installer to /usr/local/bin
 install_oh_my_posh_bin() {
   if command -v oh-my-posh >/dev/null 2>&1; then
     echo "oh-my-posh already present."
@@ -207,11 +129,10 @@ install_oh_my_posh_bin() {
 
 install_fedora_packages() {
   header "Installing Native Packages"
-  # fzf: dnfseek dep (pacseek replacement).
+  # fzf: dnfseek dep.
   # Nerd fonts, oh-my-posh, Tela-circle handled by manual installers below.
-  # Dropped vs Arch: kwin-zones (KDE-automotive ext-zones C++ plugin, no Fedora
-  # package; kwinrc has kzonesEnabled=false so snapping isn't relied on) and
-  # pacseek (pacman-only; replaced by dnfseek).
+  # kwin-zones (KDE-automotive ext-zones C++ plugin) has no Fedora package;
+  # kwinrc has kzonesEnabled=false so snapping isn't relied on.
   # qt6-qtwebsockets-devel: ships the 'import QtWebSockets' QML module that the
   # Kurve (CAVA) visualizer plasmoid needs for its ProcessMonitor fallback;
   # the base qt6-qtwebsockets lib alone lacks the QML import on Fedora. Pulls
@@ -231,11 +152,11 @@ install_fedora_packages() {
 }
 
 #############################################
-# Shared / cross-distro steps
+# Icon theme and wallpapers
 #############################################
 
-# Tela-circle purple icon theme installed from source on every distro
-# (https://github.com/vinceliuice/Tela-circle-icon-theme) for parity.
+# Tela-circle purple icon theme installed from source
+# (https://github.com/vinceliuice/Tela-circle-icon-theme).
 install_tela_icons() {
   header "Installing Tela-circle Icon Theme"
   if [ -d "$HOME/.local/share/icons/Tela-circle-purple-dark" ] \
@@ -252,9 +173,9 @@ install_tela_icons() {
   fi
 }
 
-# XeroLinux KDE wallpaper set (kde-wallpapers pkg from the XeroLinux Arch repo).
-# Installed from source on every distro: the repo mirrors the system tree under
-# usr/, matching the PKGBUILD which copies the repo root to / (minus docs).
+# XeroLinux KDE wallpaper set, installed from source: the repo mirrors the
+# system tree under usr/, matching the PKGBUILD which copies the repo root
+# to / (minus docs).
 install_xero_wallpapers() {
   header "Installing XeroLinux KDE Wallpapers"
   rm -rf /tmp/kde-wallpapers
@@ -266,40 +187,9 @@ install_xero_wallpapers() {
   fi
 }
 
-# Remove plasmoids/configs that only work on Arch (pacman backend) so they
-# don't ship a broken updater widget on Fedora. $1 = home dir to clean.
-strip_arch_plasmoids() {
-  local home="$1"
-  rm -rf "$home/.local/share/plasma/plasmoids/com.github.exequtic.apdatifier" \
-         "$home/.config/apdatifier" \
-         "$home/.config/pacseek"
-}
-
-# Swap the Arch png logo for fastfetch's built-in Fedora logo and size it to
-# look right (builtin ascii is narrower than the 30-wide kitty png). $1 = home.
-swap_fastfetch_logo_fedora() {
-  local cfg="$1/.config/fastfetch/config.jsonc"
-  [ -f "$cfg" ] || return 0
-  sed -i \
-    -e 's#"source": "~/.config/fastfetch/ArchP.png",#"source": "fedora",#' \
-    -e 's#"type": "kitty",#"type": "builtin",#' \
-    -e 's#"width": 30,#"width": 13,#' \
-    -e 's#"top": 8,#"top": 6,#' \
-    "$cfg"
-}
-
-# Swap the Kicker/Kickoff app-menu button icon from the Arch logo to Fedora's.
-# $1 = home dir.
-swap_appmenu_logo_fedora() {
-  local cfg="$1/.config/plasma-org.kde.plasma.desktop-appletsrc"
-  [ -f "$cfg" ] || return 0
-  sed -i 's/^customButtonImage=distributor-logo-archlinux/customButtonImage=goa-account-fedora/' "$cfg"
-}
-
 # fastfetch's "kernel" module prints the full Fedora kernel string with the
 # distro suffix (e.g. 6.x.x-300.fc41.x86_64). Replace that module with a command
-# that strips the ".fcNN.*" suffix for a clean "Linux 6.x.x-300". Fedora only;
-# the Arch config keeps the plain "kernel" module. $1 = home dir.
+# that strips the ".fcNN.*" suffix for a clean "Linux 6.x.x-300". $1 = home dir.
 swap_fastfetch_kernel_fedora() {
   local cfg="$1/.config/fastfetch/config.jsonc"
   [ -f "$cfg" ] || return 0
@@ -325,13 +215,9 @@ swap_konsole_columns_fedora() {
 }
 
 #############################################
-# Run package setup for detected distro
+# Run package setup
 #############################################
-if [ "$DISTRO" = "arch" ]; then
-  install_arch_packages
-else
-  install_fedora_packages
-fi
+install_fedora_packages
 
 install_tela_icons
 install_xero_wallpapers
@@ -344,24 +230,13 @@ cp -Rf Configs/Home/. ~
 sudo cp -Rf Configs/System/. /
 sudo cp -Rf Configs/Home/. /root/
 
-if [ "$DISTRO" = "fedora" ]; then
-  header "Adapting Configs For Fedora"
-  echo "Removing Arch-only plasmoids (apdatifier, pacseek)..."
-  strip_arch_plasmoids "$HOME"
-  sudo bash -c "$(declare -f strip_arch_plasmoids); strip_arch_plasmoids /root"
-  echo "Swapping fastfetch logo to Fedora..."
-  swap_fastfetch_logo_fedora "$HOME"
-  sudo bash -c "$(declare -f swap_fastfetch_logo_fedora); swap_fastfetch_logo_fedora /root"
-  echo "Swapping app-menu button icon to Fedora..."
-  swap_appmenu_logo_fedora "$HOME"
-  sudo bash -c "$(declare -f swap_appmenu_logo_fedora); swap_appmenu_logo_fedora /root"
-  echo "Fixing fastfetch kernel line for Fedora..."
-  swap_fastfetch_kernel_fedora "$HOME"
-  sudo bash -c "$(declare -f swap_fastfetch_kernel_fedora); swap_fastfetch_kernel_fedora /root"
-  echo "Widening Konsole columns to 120 for Fedora..."
-  swap_konsole_columns_fedora "$HOME"
-  sudo bash -c "$(declare -f swap_konsole_columns_fedora); swap_konsole_columns_fedora /root"
-fi
+header "Adapting Configs For Fedora"
+echo "Fixing fastfetch kernel line for Fedora..."
+swap_fastfetch_kernel_fedora "$HOME"
+sudo bash -c "$(declare -f swap_fastfetch_kernel_fedora); swap_fastfetch_kernel_fedora /root"
+echo "Widening Konsole columns to 120 for Fedora..."
+swap_konsole_columns_fedora "$HOME"
+sudo bash -c "$(declare -f swap_konsole_columns_fedora); swap_konsole_columns_fedora /root"
 
 header "Setting up Fastfetch"
 read -p "Enable fastfetch on terminal launch? (y/n): " response
@@ -383,30 +258,6 @@ grep -qxF '# Oh-My-Posh Config' "$bashrc_file" || echo -e '\n# Oh-My-Posh Config
 grep -qxF 'eval "$(oh-my-posh init bash --config $HOME/.config/ohmyposh/xero.omp.json)"' "$bashrc_file" || \
   echo 'eval "$(oh-my-posh init bash --config $HOME/.config/ohmyposh/xero.omp.json)"' >> "$bashrc_file"
 echo "Oh-My-Posh injection complete."
-
-# Set or append a KEY=VALUE option in /etc/default/grub.
-set_grub_option() {
-  local key="$1" val="$2"
-  if grep -q "^${key}=" /etc/default/grub; then
-    sudo sed -i "s/^${key}=.*/${key}=${val}/" /etc/default/grub
-  else
-    echo "${key}=${val}" | sudo tee -a /etc/default/grub >/dev/null
-  fi
-}
-
-header "Installing GRUB Theme"
-if [ -d "/boot/grub" ] || [ -d "/boot/grub2" ]; then
-  # Apply /etc/default/grub tweaks BEFORE Grub.sh regenerates grub.cfg.
-  set_grub_option GRUB_GFXMODE 1920x1080x32
-  if [ "$DISTRO" = "fedora" ]; then
-    # Fedora hides the boot menu by default; show it for 5s so the theme shows.
-    set_grub_option GRUB_TIMEOUT 5
-    set_grub_option GRUB_TIMEOUT_STYLE menu
-  fi
-  sudo ./Grub.sh
-else
-  echo "GRUB not detected, skipping theme."
-fi
 
 header "Installing Layan KDE Theme"
 if git clone https://github.com/vinceliuice/Layan-kde.git; then
